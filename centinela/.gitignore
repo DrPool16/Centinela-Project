@@ -1,0 +1,30 @@
+# Zephyr / west build artifacts
+firmware/build/
+firmware/build-*/
+*.elf
+*.hex
+*.bin
+*.map
+
+# El workspace de Zephyr (zephyr/, modules/, bootloader/) vive fuera del repo,
+# ver docs/adr/ADR-001 para la razón (es tooling, no código del proyecto).
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docker
+cloud/**/data/
+
+# Secretos (nunca deben commitearse)
+*.pem
+*.key
+.env

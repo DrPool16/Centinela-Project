@@ -1,0 +1,66 @@
+/*
+ * IoT Monitor - Device Tree overlay
+ * I2C0: PTB2(SCL) PTB3(SDA)
+ * SPI1: PTD5(SCK) PTB16(MOSI) PTB17(MISO) PTD4(CS-GPIO)
+ */
+
+#include <nxp/kinetis/K32L2B31VLH0A-pinctrl.h>
+
+&pinctrl {
+    i2c0_custom: i2c0_custom {
+        group0 {
+            /* 1 = PORTB, 2 = PIN2, ALT2 para I2C */
+            /* 1 = PORTB, 3 = PIN3, ALT2 para I2C */
+            pinmux = <I2C0_SCL_PTB2>,
+                     <I2C0_SDA_PTB3>;
+            drive-open-drain;
+             bias-pull-up;
+	    /* Agregamos la propiedad obligatoria que pide el compilador */
+            drive-strength = "low";
+	    /* Agregamos el parámetro que el driver de NXP necesita obligatoriamente */
+            slew-rate = "fast";
+        };
+    };
+};
+
+&i2c0 {
+    status = "okay";
+    /* 2. Forzamos a I2C0 a usar los pines que acabamos de definir arriba */
+    pinctrl-0 = <&i2c0_custom>;
+    pinctrl-names = "default";
+    clock-frequency = <I2C_BITRATE_STANDARD>;
+
+    bmp280: bmp280@76 {
+        compatible = "bosch,bme280";
+        reg = <0x76>;
+        status = "okay";
+    };
+
+    ads1115: ads1115@48 {
+        compatible = "ti,ads1115";
+        reg = <0x48>;
+        status = "okay";
+        #io-channel-cells = <1>;
+    };
+};
+
+/ {
+    spi1: spi@40077000 {
+        compatible = "nxp,kinetis-spi";
+        reg = <0x40077000 0x0C>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        clock-frequency = <1000000>;
+        status = "okay";
+        cs-gpios = <&gpiod 4 GPIO_ACTIVE_LOW>;
+
+        w25q: w25q32@0 {
+            compatible = "jedec,spi-nor";
+            reg = <0>;
+            spi-max-frequency = <1000000>;
+            jedec-id = [20 40 16];
+            size = <33554432>;
+            status = "okay";
+        };
+    };
+};
