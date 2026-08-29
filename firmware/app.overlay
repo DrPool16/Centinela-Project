@@ -21,6 +21,18 @@
             slew-rate = "fast";
         };
     };
+
+    spi1_default: spi1_default {
+        group0 {
+            /* PTD5 SCK, PTB16 MOSI, PTB17 MISO — ALT2. PTD4 (CS) se
+             * maneja aparte como GPIO manual, no como función SPI. */
+            pinmux = <SPI1_SCK_PTD5>,
+                     <SPI1_MOSI_PTB16>,
+                     <SPI1_MISO_PTB17>;
+            drive-strength = "low";
+            slew-rate = "fast";
+        };
+    };
 };
 
 &i2c0 {
@@ -39,6 +51,8 @@
         #size-cells = <0>;
         clock-frequency = <1000000>;
         status = "okay";
+        pinctrl-0 = <&spi1_default>;
+        pinctrl-names = "default";
         cs-gpios = <&gpiod 4 GPIO_ACTIVE_LOW>;
 
         w25q: w25q32@0 {
