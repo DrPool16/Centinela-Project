@@ -44,19 +44,28 @@ flowchart TB
 |---|---|---|---|---|
 | Vibración (IMU) | MPU6050 | I2C0 (PTB2/PTB3, compartido con BMP280) | Acelerómetro 3 ejes → RMS/pico/kurtosis de vibración | Pendiente (Fase 2) |
 | Ambiental | BMP280 | I2C0, addr `0x76` | Temperatura + presión (contexto, no dispara alarmas por sí solo) | Driver heredado, requiere verificación (ver nota abajo) |
-| Corriente | SCT-013 → ADS1115 | I2C0, ADS1115 addr `0x48` | Corriente AC no invasiva del motor → RMS de corriente | Driver heredado, requiere verificación |
-| Almacenamiento local | W25Q32 (flash SPI) | SPI1 (PTD5 SCK, PTB16 MOSI, PTB17 MISO, PTD4 CS) | Store-and-forward de telemetría + datos de calibración | Driver custom heredado, requiere revisión (ver nota) |
+| Corriente | SCT-013 → ADS1115 | I2C0, ADS1115 addr `0x48` | Corriente AC no invasiva del motor → RMS de corriente | Stub vacío — pendiente de implementación real (Fase 2) |
+| Almacenamiento local | W25Q32 (flash SPI) | SPI1 (PTD5 SCK, PTB16 MOSI, PTB17 MISO, PTD4 CS) | Store-and-forward de telemetría + datos de calibración | Driver custom funcional, fuera de la API estándar de Zephyr (ver nota) |
 | Conectividad celular | Quectel EC200T-AU | LPUART1 (libre; LPUART0 está tomado por la consola de depuración) | AT commands, MQTT/TLS | Fase 4 |
 
-**Nota sobre el código heredado**: el devicetree actual declara el BMP280 como
-`compatible = "bosch,bme280"` (el driver de BME280, que espera también el
-sensor de humedad). Un BMP280 real no tiene ese registro, lo que puede
-explicar por qué "no responde" incluso con el sensor bien cableado — es una
-hipótesis a verificar en la Fase 2, no un hecho confirmado todavía. El driver
-SPI (`spi_kinetis.c`) tampoco usa la API estándar de SPI de Zephyr, sino
-registros directos del periférico — candidato a reemplazar por el driver
-nativo de Zephyr si existe soporte para este SoC. Ver también la nota de
-memoria sobre la referencia funcional en MCUXpresso.
+**Nota sobre el código heredado (actualizada tras auditoría en Fase 2)**: la
+hipótesis original — que el devicetree declarara el BMP280 como
+`compatible = "bosch,bme280"` causaba el "no responde" — **se descartó**. Ese
+nodo del devicetree es código muerto: `CONFIG_SENSOR`/`CONFIG_BME280` nunca se
+habilitan en `prj.conf`, así que el driver nativo de Zephyr ni se compila. El
+sensor se lee con un driver propio (`drivers/bmp280.c`) que habla I2C directo
+y valida correctamente `chip_id == 0x58` (el ID real del BMP280). El nodo
+`bmp280@76` se eliminó del overlay por ser ruido engañoso, no una
+configuración real. El "no responde" observado se debe simplemente a que el
+sensor no estaba cableado en la prueba.
+
+El driver SPI (`spi_kinetis.c`) tampoco usa la API estándar de SPI de Zephyr,
+sino registros directos del periférico — sigue siendo un candidato a
+reemplazar por el driver nativo de Zephyr, pero es funcionalmente correcto
+(protocolo JEDEC/read/write/erase de `w25q.c` bien implementado), así que se
+deja para una decisión de arquitectura posterior, no un bug urgente.
+El driver de ADS1115/SCT-013 (`drivers/ads1115.c`) sí es un stub vacío sin
+implementación real — ver seguimiento en Fase 2.
 
 ## Por qué I2C0 compartido para tres dispositivos
 
