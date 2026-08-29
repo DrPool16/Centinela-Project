@@ -1,6 +1,7 @@
 #include "spi_kinetis.h"
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/pinctrl.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(spi_kinetis, LOG_LEVEL_DBG);
@@ -10,26 +11,11 @@ static uint32_t spi_base = KIN_SPI1_BASE;
 #define CS_PIN  4U
 static const struct device *cs_gpio_dev;
 
-/* ─── Registros PORT para configuración de pines ────────────────────────
- * Cada pin tiene un registro PCR (Pin Control Register) de 32 bits
- * Offset del PCR = 0x00 + (pin_number * 4)
- * Bits [10:8] = MUX — selecciona la función del pin
- * MUX=0 → analógico/disabled
- * MUX=1 → GPIO
- * MUX=2 → Alt2 (SPI1 en PTB16, PTB17, PTD5)
- */
-/* Prefijo KIN_ para evitar conflicto con SDK NXP */
-#define KIN_PORTB_BASE      0x4004A000UL
-#define KIN_PORTD_BASE      0x4004C000UL
-
-#define KIN_SIM_SCGC5_ADDR  0x40048038UL
-#define KIN_SCGC5_PORTB     (1U << 10)
-#define KIN_SCGC5_PORTD     (1U << 12)
-
-#define KIN_PORT_PCR(port_base, pin) \
-    (*((volatile uint32_t *)((port_base) + ((pin) * 4U))))
-
-#define KIN_PCR_MUX_ALT2    (2U << 8)
+/* Pinctrl del nodo spi1 (app.overlay) — no hay driver Zephyr nativo para
+ * el periférico SPI simple de esta SoC (ver ADR-002), pero el muxeo de
+ * pines/habilitación de relojes sí pasa por el subsistema pinctrl en vez
+ * de escribir SIM_SCGC5/PCR a mano. */
+PINCTRL_DT_DEFINE(DT_NODELABEL(spi1));
 
 static void calc_baud(uint32_t bus_clock, uint32_t target,
                       uint8_t *sppr_out, uint8_t *spr_out)
@@ -58,21 +44,18 @@ void spi_kin_init(uint32_t base, uint32_t bus_clock_hz, uint32_t target_hz)
 {
     spi_base = base;
 
-    /* ── 1. Habilitar clocks de puertos B y D en SIM_SCGC5 ──────────── */
-    volatile uint32_t *scgc5 = (volatile uint32_t *)KIN_SIM_SCGC5_ADDR;
-    *scgc5 |= KIN_SCGC5_PORTB | KIN_SCGC5_PORTD;
+    /* ── 1. Aplicar pinctrl: muxea PTD5(SCK)/PTB16(MOSI)/PTB17(MISO) a
+     * su función SPI1 y habilita los relojes de PORTB/PORTD — todo vía
+     * el subsistema pinctrl de Zephyr (PTD4/CS se configura aparte como
+     * GPIO manual, no es parte de este estado). ─────────────────────── */
+    int pin_err = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(DT_NODELABEL(spi1)),
+                                       PINCTRL_STATE_DEFAULT);
+    if (pin_err) {
+        LOG_ERR("pinctrl_apply_state(spi1) falló: %d", pin_err);
+        return;
+    }
 
-    /* ── 2. Configurar pines SPI1 via PCR ────────────────────────────
-     * PTD5 → SCK  → Alt2
-     * PTB16 → MOSI → Alt2
-     * PTB17 → MISO → Alt2
-     * PTD4 → CS   → Alt1 (GPIO) — configurado después via Zephyr GPIO
-     */
-    KIN_PORT_PCR(KIN_PORTD_BASE, 5U)  = KIN_PCR_MUX_ALT2;  /* SCK  */
-    KIN_PORT_PCR(KIN_PORTB_BASE, 16U) = KIN_PCR_MUX_ALT2;  /* MOSI */
-    KIN_PORT_PCR(KIN_PORTB_BASE, 17U) = KIN_PCR_MUX_ALT2;  /* MISO */
-
-    /* ── 3. Habilitar clock del SPI1 en SIM_SCGC4 ───────────────────── */
+    /* ── 2. Habilitar clock del SPI1 en SIM_SCGC4 ───────────────────── */
     volatile uint32_t *scgc4 = (volatile uint32_t *)KIN_SIM_SCGC4_ADDR;
     if (base == KIN_SPI1_BASE) {
         *scgc4 |= KIN_SIM_SCGC4_SPI1;
@@ -80,23 +63,23 @@ void spi_kin_init(uint32_t base, uint32_t bus_clock_hz, uint32_t target_hz)
         *scgc4 |= KIN_SIM_SCGC4_SPI0;
     }
 
-    /* ── 4. Deshabilitar SPI antes de configurar ─────────────────────── */
+    /* ── 3. Deshabilitar SPI antes de configurar ─────────────────────── */
     KIN_SPI_REG(spi_base, KIN_SPI_C1_OFF) = 0x00U;
 
-    /* ── 5. Baud rate ────────────────────────────────────────────────── */
+    /* ── 4. Baud rate ────────────────────────────────────────────────── */
     uint8_t sppr, spr;
     calc_baud(bus_clock_hz, target_hz, &sppr, &spr);
     KIN_SPI_REG(spi_base, KIN_SPI_BR_OFF) = (uint8_t)((sppr << 4) | spr);
 
-    /* ── 6. Control 1: MSTR + CPOL + CPHA (Mode 3) ──────────────────── */
+    /* ── 5. Control 1: MSTR + CPOL + CPHA (Mode 3) ──────────────────── */
     KIN_SPI_REG(spi_base, KIN_SPI_C1_OFF) = KIN_SPI_C1_MSTR |
                                               KIN_SPI_C1_CPOL  |
                                               KIN_SPI_C1_CPHA;
 
-    /* ── 7. Habilitar SPI ────────────────────────────────────────────── */
+    /* ── 6. Habilitar SPI ────────────────────────────────────────────── */
     KIN_SPI_REG(spi_base, KIN_SPI_C1_OFF) |= KIN_SPI_C1_SPE;
 
-    /* ── 8. CS como GPIO via Zephyr ──────────────────────────────────── */
+    /* ── 7. CS como GPIO via Zephyr ──────────────────────────────────── */
     cs_gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpiod));
     if (!device_is_ready(cs_gpio_dev)) {
         LOG_ERR("GPIO D no disponible");

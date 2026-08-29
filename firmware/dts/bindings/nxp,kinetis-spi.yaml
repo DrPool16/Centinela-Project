@@ -2,7 +2,7 @@ description: NXP Kinetis SPI controller (bare-metal driver)
 
 compatible: "nxp,kinetis-spi"
 
-include: [spi-controller.yaml]
+include: [spi-controller.yaml, pinctrl-device.yaml]
 
 properties:
   reg:
