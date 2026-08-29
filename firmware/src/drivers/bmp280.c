@@ -149,12 +149,7 @@ bmp280_status_t bmp280_read(const struct device *dev, bmp280_data_t *out)
     adc_P = ((int32_t)raw[0] << 12) | ((int32_t)raw[1] << 4) | (raw[2] >> 4);
     adc_T = ((int32_t)raw[3] << 12) | ((int32_t)raw[4] << 4) | (raw[5] >> 4);
 
-    int32_t  temp_raw  = compensate_temp(adc_P, &t_fine);
-
-    /* Nota: compensate_temp toma adc_T no adc_P — corregir orden */
-    t_fine = 0;
-    temp_raw = compensate_temp(adc_T, &t_fine);
-
+    int32_t  temp_raw  = compensate_temp(adc_T, &t_fine);
     uint32_t press_raw = compensate_press(adc_P, t_fine);
 
     out->temperature_c = (float)temp_raw / 100.0f;
