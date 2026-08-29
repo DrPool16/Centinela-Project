@@ -35,7 +35,7 @@ depende de la red del cliente), que:
 
 | ID | Caso de uso |
 |---|---|
-| UC1 | Detectar desbalance/desgaste de rodamiento por firma de vibración fuera de la línea base calibrada |
+| UC1 | Detectar desbalance/desgaste de rodamiento por firma de vibración fuera de la línea base calibrada *(diferido — ver nota bajo FR1)* |
 | UC2 | Detectar sobrecarga o fallo eléctrico por firma de corriente del motor (RMS fuera de rango) |
 | UC3 | Correlacionar anomalías con contexto ambiental (temperatura/presión) |
 | UC4 | Alertar remotamente vía celular al cruzar un umbral de anomalía |
@@ -46,6 +46,9 @@ depende de la red del cliente), que:
 
 - **FR1**: muestrear vibración (MPU6050), corriente (SCT-013 vía ADS1115) y
   ambiente (BMP280) a una tasa configurable.
+  > **Nota (Fase 2)**: el MPU6050/vibración se **difiere**, no se descarta —
+  > el proyecto avanza con corriente + contexto ambiental como señales de
+  > detección mientras tanto. UC1 queda pendiente de esa reincorporación.
 - **FR2**: calcular características de la señal en el nodo (RMS, pico, factor de
   cresta, kurtosis para vibración; RMS para corriente AC).
 - **FR3**: detectar anomalías comparando contra una línea base calibrada por
