@@ -144,18 +144,20 @@ volatile uint8_t *i2c0_s  = (volatile uint8_t *)0x40066003UL;
 LOG_INF("I2C0_F=0x%02X C1=0x%02X S=0x%02X",
         *i2c0_f, *i2c0_c1, *i2c0_s);
 
-    /* Inicializar sensores */
+    /* Inicializar sensores — el fallo de uno no debe impedir monitorear
+     * los demás: bmp280_read()/sct013_read() ya reportan sus propios
+     * fallos por lectura (bmp_ok/curr_ok más abajo). */
     if (bmp280_init(i2c_dev) != BMP280_OK) {
         LOG_ERR("BMP280 no responde");
-        return;
+    } else {
+        LOG_INF("BMP280 OK");
     }
-    LOG_INF("BMP280 OK");
 
     if (ads1115_init(i2c_dev) != ADS1115_OK) {
         LOG_ERR("ADS1115 no responde");
-        return;
+    } else {
+        LOG_INF("ADS1115 OK");
     }
-    LOG_INF("ADS1115 OK");
 
     bmp280_data_t  env;
     sct013_data_t  curr;
