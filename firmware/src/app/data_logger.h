@@ -17,8 +17,14 @@ typedef struct {
 } sensor_record_t;
 
 #define RECORD_STATUS_OK            0x01
+/* ALERT: límite absoluto de seguridad, igual para cualquier máquina */
 #define RECORD_STATUS_TEMP_ALERT    0x02
 #define RECORD_STATUS_CURR_ALERT    0x04
+/* ANOMALY: desviación estadística (z-score) de la línea base calibrada
+ * para esta máquina específica (FR3) — detecta degradación temprana
+ * incluso dentro de los límites absolutos de ALERT. */
+#define RECORD_STATUS_TEMP_ANOMALY  0x08
+#define RECORD_STATUS_CURR_ANOMALY  0x10
 
 #define ALERT_TEMP_MAX_C            40.0f
 #define ALERT_CURR_MAX_A            5.0f

@@ -13,6 +13,7 @@ target_sources(app PRIVATE
     src/drivers/spi_kinetis.c
     src/app/data_logger.c
     src/lib/bmp280_compensation.c
+    src/lib/anomaly_detector.c
 )
 
 target_include_directories(app PRIVATE

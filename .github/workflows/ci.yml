@@ -43,12 +43,11 @@ jobs:
           cd workspace
           west build -b frdm_k32l2b3 "$GITHUB_WORKSPACE/centinela/firmware" -d build-frdm
 
-      - name: Ejecutar tests Ztest (native_sim)
+      - name: Ejecutar tests Ztest (native_sim, descubiertos con twister)
         run: |
           cd workspace
-          west build -b native_sim \
-            "$GITHUB_WORKSPACE/centinela/firmware/tests/lib/bmp280_compensation" \
-            -d build-test -t run
+          west twister -T "$GITHUB_WORKSPACE/centinela/firmware/tests" \
+            -p native_sim --inline-logs -v
 
       - name: cppcheck (análisis estático)
         run: |
