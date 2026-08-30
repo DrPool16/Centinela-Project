@@ -12,12 +12,14 @@ target_sources(app PRIVATE
     src/drivers/w25q.c
     src/drivers/spi_kinetis.c
     src/app/data_logger.c
+    src/lib/bmp280_compensation.c
 )
 
 target_include_directories(app PRIVATE
     src/drivers
     src/app
     src/threads
+    src/lib
 )
 
 # Agregar directorio de bindings custom al DTS

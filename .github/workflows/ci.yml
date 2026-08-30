@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    container:
+      image: zephyrprojectrtos/ci:latest
+      options: --user root
+    env:
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+
+    steps:
+      - name: Checkout Centinela
+        uses: actions/checkout@v4
+        with:
+          path: centinela
+
+      - name: Inicializar workspace de Zephyr (v4.4.0)
+        run: |
+          west init -m https://github.com/zephyrproject-rtos/zephyr --mr v4.4.0 workspace
+          cd workspace
+          west update --narrow -o=--depth=1
+          west zephyr-export
+
+      - name: Localizar el Zephyr SDK preinstalado en la imagen de CI
+        run: |
+          SDK_DIR=$(find /opt/toolchains -maxdepth 1 -iname 'zephyr-sdk-*' | head -1)
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::No se encontró un Zephyr SDK bajo /opt/toolchains"
+            find /opt/toolchains -maxdepth 2 2>/dev/null || true
+            exit 1
+          fi
+          echo "SDK encontrado en: $SDK_DIR"
+          echo "ZEPHYR_SDK_INSTALL_DIR=$SDK_DIR" >> "$GITHUB_ENV"
+
+      - name: Build firmware real (frdm_k32l2b3)
+        run: |
+          cd workspace
+          west build -b frdm_k32l2b3 "$GITHUB_WORKSPACE/centinela/firmware" -d build-frdm
+
+      - name: Ejecutar tests Ztest (native_sim)
+        run: |
+          cd workspace
+          west build -b native_sim \
+            "$GITHUB_WORKSPACE/centinela/firmware/tests/lib/bmp280_compensation" \
+            -d build-test -t run
+
+      - name: cppcheck (análisis estático)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq cppcheck
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --suppress=missingIncludeSystem \
+            -I "$GITHUB_WORKSPACE/centinela/firmware/src" \
+            "$GITHUB_WORKSPACE/centinela/firmware/src"
