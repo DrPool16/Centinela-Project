@@ -1,0 +1,4 @@
+tests:
+  lib.anomaly_detector:
+    platform_allow: native_sim
+    tags: lib

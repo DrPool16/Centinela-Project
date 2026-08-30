@@ -4,8 +4,12 @@
 #include "bmp280.h"
 #include "ads1115.h"
 #include "data_logger.h"
+#include "anomaly_detector.h"
 
 LOG_MODULE_REGISTER(sensor_thread, LOG_LEVEL_INF);
+
+#define CALIBRATION_SAMPLES  20      /* ~100s de calibración a 5s/muestra */
+#define Z_SCORE_THRESHOLD    3.0f    /* regla de las 3 sigma */
 
 /* Device Tree — obtener handle del bus I2C */
 #define I2C_NODE DT_NODELABEL(i2c0)
@@ -164,6 +168,18 @@ LOG_INF("I2C0_F=0x%02X C1=0x%02X S=0x%02X",
     sensor_record_t record;
     uint32_t tick = 0;
 
+    /* Línea base por señal (FR3: anomalía relativa a la máquina, no un
+     * límite absoluto genérico) — cada una calibra de forma independiente,
+     * un sensor no crítico fallando no debe bloquear al otro. */
+    baseline_accumulator_t temp_acc, curr_acc;
+    baseline_t temp_baseline = {0}, curr_baseline = {0};
+    bool temp_calibrated = false, curr_calibrated = false;
+    baseline_accumulator_reset(&temp_acc);
+    baseline_accumulator_reset(&curr_acc);
+
+    LOG_INF("Iniciando calibración de línea base (%d muestras por señal)...",
+            CALIBRATION_SAMPLES);
+
     while (1) {
         /* Tomar semáforo antes de usar I2C */
         k_sem_take(&i2c_sem, K_FOREVER);
@@ -186,6 +202,42 @@ LOG_INF("I2C0_F=0x%02X C1=0x%02X S=0x%02X",
             record.status |= RECORD_STATUS_TEMP_ALERT;
         if (record.current_rms > ALERT_CURR_MAX_A)
             record.status |= RECORD_STATUS_CURR_ALERT;
+
+        /* Temperatura: calibrar línea base o detectar anomalía relativa */
+        if (!temp_calibrated) {
+            if (bmp_ok) baseline_accumulator_add(&temp_acc, record.temperature);
+            if (temp_acc.count >= CALIBRATION_SAMPLES) {
+                temp_baseline = baseline_accumulator_finalize(&temp_acc);
+                temp_calibrated = true;
+                LOG_INF("Línea base de temperatura lista — mean=%.2f stddev=%.2f",
+                        (double)temp_baseline.mean, (double)temp_baseline.stddev);
+            }
+        } else if (bmp_ok) {
+            float z_temp;
+            if (anomaly_z_score_check(&temp_baseline, record.temperature,
+                                       Z_SCORE_THRESHOLD, &z_temp)) {
+                record.status |= RECORD_STATUS_TEMP_ANOMALY;
+                LOG_WRN("Anomalía de temperatura: z=%.2f", (double)z_temp);
+            }
+        }
+
+        /* Corriente: calibrar línea base o detectar anomalía relativa */
+        if (!curr_calibrated) {
+            if (curr_ok) baseline_accumulator_add(&curr_acc, record.current_rms);
+            if (curr_acc.count >= CALIBRATION_SAMPLES) {
+                curr_baseline = baseline_accumulator_finalize(&curr_acc);
+                curr_calibrated = true;
+                LOG_INF("Línea base de corriente lista — mean=%.3f stddev=%.3f",
+                        (double)curr_baseline.mean, (double)curr_baseline.stddev);
+            }
+        } else if (curr_ok) {
+            float z_curr;
+            if (anomaly_z_score_check(&curr_baseline, record.current_rms,
+                                       Z_SCORE_THRESHOLD, &z_curr)) {
+                record.status |= RECORD_STATUS_CURR_ANOMALY;
+                LOG_WRN("Anomalía de corriente: z=%.2f", (double)z_curr);
+            }
+        }
 
         /* Enviar a logger_thread via queue */
         if (k_msgq_put(&sensor_queue, &record, K_NO_WAIT) != 0) {
