@@ -27,6 +27,17 @@ jobs:
           west update --narrow -o=--depth=1
           west zephyr-export
 
+      - name: Localizar el Zephyr SDK preinstalado en la imagen de CI
+        run: |
+          SDK_DIR=$(find /opt/toolchains -maxdepth 1 -iname 'zephyr-sdk-*' | head -1)
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::No se encontró un Zephyr SDK bajo /opt/toolchains"
+            find /opt/toolchains -maxdepth 2 2>/dev/null || true
+            exit 1
+          fi
+          echo "SDK encontrado en: $SDK_DIR"
+          echo "ZEPHYR_SDK_INSTALL_DIR=$SDK_DIR" >> "$GITHUB_ENV"
+
       - name: Build firmware real (frdm_k32l2b3)
         run: |
           cd workspace
