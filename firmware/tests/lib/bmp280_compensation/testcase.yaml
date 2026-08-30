@@ -1,0 +1,4 @@
+tests:
+  lib.bmp280_compensation:
+    platform_allow: native_sim
+    tags: lib

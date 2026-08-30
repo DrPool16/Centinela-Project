@@ -1,4 +1,5 @@
 #include "bmp280.h"
+#include "bmp280_compensation.h"
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -17,15 +18,6 @@ LOG_MODULE_REGISTER(bmp280, LOG_LEVEL_INF);
 #define BMP280_REG_PRESS_MSB    0xF7
 #define BMP280_REG_TEMP_MSB     0xFA
 #define BMP280_REG_CALIB_START  0x88
-
-/* Calibración — igual que Fase 1 */
-typedef struct {
-    uint16_t dig_T1;
-    int16_t  dig_T2, dig_T3;
-    uint16_t dig_P1;
-    int16_t  dig_P2, dig_P3, dig_P4, dig_P5;
-    int16_t  dig_P6, dig_P7, dig_P8, dig_P9;
-} bmp280_calib_t;
 
 static bmp280_calib_t calib;
 
@@ -65,38 +57,6 @@ static void load_calibration(const struct device *dev)
     calib.dig_P7 = (int16_t) (raw[19] << 8) | raw[18];
     calib.dig_P8 = (int16_t) (raw[21] << 8) | raw[20];
     calib.dig_P9 = (int16_t) (raw[23] << 8) | raw[22];
-}
-
-static int32_t compensate_temp(int32_t adc_T, int32_t *t_fine)
-{
-    int32_t var1, var2, T;
-    var1 = ((((adc_T >> 3) - ((int32_t)calib.dig_T1 << 1)))
-             * ((int32_t)calib.dig_T2)) >> 11;
-    var2 = (((((adc_T >> 4) - ((int32_t)calib.dig_T1))
-             * ((adc_T >> 4) - ((int32_t)calib.dig_T1))) >> 12)
-             * ((int32_t)calib.dig_T3)) >> 14;
-    *t_fine = var1 + var2;
-    T = (*t_fine * 5 + 128) >> 8;
-    return T;
-}
-
-static uint32_t compensate_press(int32_t adc_P, int32_t t_fine)
-{
-    int64_t var1, var2, p;
-    var1 = ((int64_t)t_fine) - 128000;
-    var2 = var1 * var1 * (int64_t)calib.dig_P6;
-    var2 = var2 + ((var1 * (int64_t)calib.dig_P5) << 17);
-    var2 = var2 + (((int64_t)calib.dig_P4) << 35);
-    var1 = ((var1 * var1 * (int64_t)calib.dig_P3) >> 8)
-         + ((var1 * (int64_t)calib.dig_P2) << 12);
-    var1 = (((((int64_t)1) << 47) + var1)) * ((int64_t)calib.dig_P1) >> 33;
-    if (var1 == 0) return 0;
-    p = 1048576 - adc_P;
-    p = (((p << 31) - var2) * 3125) / var1;
-    var1 = (((int64_t)calib.dig_P9) * (p >> 13) * (p >> 13)) >> 25;
-    var2 = (((int64_t)calib.dig_P8) * p) >> 19;
-    p = ((p + var1 + var2) >> 8) + (((int64_t)calib.dig_P7) << 4);
-    return (uint32_t)p;
 }
 
 /* ─── API pública ────────────────────────────────────────────────────── */
@@ -149,8 +109,8 @@ bmp280_status_t bmp280_read(const struct device *dev, bmp280_data_t *out)
     adc_P = ((int32_t)raw[0] << 12) | ((int32_t)raw[1] << 4) | (raw[2] >> 4);
     adc_T = ((int32_t)raw[3] << 12) | ((int32_t)raw[4] << 4) | (raw[5] >> 4);
 
-    int32_t  temp_raw  = compensate_temp(adc_T, &t_fine);
-    uint32_t press_raw = compensate_press(adc_P, t_fine);
+    int32_t  temp_raw  = bmp280_compensate_temp(adc_T, &calib, &t_fine);
+    uint32_t press_raw = bmp280_compensate_press(adc_P, t_fine, &calib);
 
     out->temperature_c = (float)temp_raw / 100.0f;
     out->pressure_pa   = (float)press_raw / 256.0f;

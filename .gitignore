@@ -1,6 +1,8 @@
 # Zephyr / west build artifacts
 firmware/build/
 firmware/build-*/
+firmware/**/build/
+firmware/twister-out*/
 *.elf
 *.hex
 *.bin
