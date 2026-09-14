@@ -1,0 +1,56 @@
+# Hardware — documentación de referencia
+
+Esta carpeta contiene las notas de hardware del proyecto y el índice de la
+documentación de referencia usada durante el desarrollo.
+
+## Datasheets y esquemáticos
+
+Los PDFs **no se versionan** en el repositorio (son ~8 MB de documentación
+propietaria de NXP, redistribuible solo desde su sitio oficial). Están
+ignorados vía `.gitignore`. Para reproducir el entorno de trabajo,
+descárgalos desde NXP y colócalos en `hardware/datasheets/`:
+
+| Archivo | Documento | Para qué se usó |
+|---|---|---|
+| `NXP_K32L2B_RM.pdf` | K32 L2B Sub-Family Reference Manual (Rev. 2, 12/2019, doc. `K32L2B3xRM`) | Cap. 27 (MCG_Lite) para verificar la fuente de reloj real; cap. 36 (I2C) para decodificar `I2Cx_S`/`I2Cx_C1`/`I2Cx_F`; tabla de vectores de interrupción |
+| `K32L2B3x.pdf` | K32 L2B Data Sheet | Características eléctricas, pinout del encapsulado |
+| `FRDM-K32L2B3.pdf` | FRDM-K32L2B3 Board User Manual | Descripción general de la placa y sus periféricos integrados |
+| `SCH-46355.pdf` | Esquemático de la FRDM-K32L2B3 (Rev. A) | Confirmar que el FXOS8700 está poblado y su dirección (`0x1C`); mapeo del header (`A0`–`A5` → PTB0, PTB1, PTB2, PTB3, PTC2, PTC1); pull-ups del bus I2C0 (`R79`/`R80`, 4.7 kΩ) |
+
+Todos se obtienen desde la página del producto en nxp.com
+(FRDM-K32L2B3 / K32 L2B), sección *Documentation*.
+
+## Hallazgos de hardware relevantes
+
+- **Pines I2C del header**: `A4` = PTC2 (SDA) y `A5` = PTC1 (SCL), que
+  corresponden al periférico **I2C1**. Son los pines I2C designados por NXP
+  en esta placa y los que usa el proyecto (ver ADR-003).
+- **`A2` = PTB2 y `A3` = PTB3** (I2C0): ningún dispositivo logra comunicarse
+  por estos pines bajo Zephyr, pese a que el mux se programa correctamente
+  (`PORTB_PCRn = 0x203`, `MUX=2`) y a haber probado con pull-ups externos de
+  4.7 kΩ. La causa eléctrica **no está determinada** (haría falta un
+  osciloscopio). Pendiente abierto, no causa conocida — ver ADR-003.
+- **FXOS8700CQ integrado**: acelerómetro + magnetómetro soldado en la placa,
+  en `0x1C` sobre I2C0 (pines stock PTE24/PTE25, con pull-ups de 4.7 kΩ
+  poblados). Tiene un pin de **reset en PTE1 (activo en alto)**: si nadie lo
+  baja, el sensor no responde en el bus. Soportado nativamente por Zephyr
+  (`nxp,fxos8700`), es el candidato natural para el sensor de vibración
+  diferido.
+
+## Cableado actual (validado en hardware)
+
+```
+ADS1115            FRDM-K32L2B3
+-------            ------------
+VDD        <---->  3.3V
+GND        <---->  GND
+SCL        <---->  A5  (PTC1, I2C1_SCL)
+SDA        <---->  A4  (PTC2, I2C1_SDA)
+ADDR       <---->  GND        (fija la dirección en 0x48)
+A0, A1     <---->  salida del SCT-013 (lectura diferencial)
+```
+
+El SCT-013 es la variante **con salida de voltaje** (resistencia burden
+interna), por lo que se conecta directamente a las entradas del ADS1115 sin
+componentes adicionales. La pinza debe abrazar **un solo conductor** (fase)
+de la carga a medir.

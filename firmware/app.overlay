@@ -1,23 +1,24 @@
 /*
  * IoT Monitor - Device Tree overlay
- * I2C0: PTB2(SCL) PTB3(SDA)
+ * I2C1: PTC1(SCL, header A5) PTC2(SDA, header A4)
  * SPI1: PTD5(SCK) PTB16(MOSI) PTB17(MISO) PTD4(CS-GPIO)
+ *
+ * Nota: se usa I2C1 en PTC1/PTC2 — los pines I2C designados por NXP en el
+ * header de esta placa — y no I2C0 en PTB2/PTB3 como en la version original.
+ * Ver docs/adr/ADR-003-bus-i2c-sensores.md para el bring-up que motivo el
+ * cambio.
  */
 
 #include <nxp/kinetis/K32L2B31VLH0A-pinctrl.h>
 
 &pinctrl {
-    i2c0_custom: i2c0_custom {
+    i2c1_custom: i2c1_custom {
         group0 {
-            /* 1 = PORTB, 2 = PIN2, ALT2 para I2C */
-            /* 1 = PORTB, 3 = PIN3, ALT2 para I2C */
-            pinmux = <I2C0_SCL_PTB2>,
-                     <I2C0_SDA_PTB3>;
-            drive-open-drain;
-             bias-pull-up;
-	    /* Agregamos la propiedad obligatoria que pide el compilador */
+            /* PTC1 = SCL (A5), PTC2 = SDA (A4), ALT2 para I2C1 */
+            pinmux = <I2C1_SCL_PTC1>,
+                     <I2C1_SDA_PTC2>;
+            bias-pull-up;
             drive-strength = "low";
-	    /* Agregamos el parámetro que el driver de NXP necesita obligatoriamente */
             slew-rate = "fast";
         };
     };
@@ -35,10 +36,9 @@
     };
 };
 
-&i2c0 {
+&i2c1 {
     status = "okay";
-    /* 2. Forzamos a I2C0 a usar los pines que acabamos de definir arriba */
-    pinctrl-0 = <&i2c0_custom>;
+    pinctrl-0 = <&i2c1_custom>;
     pinctrl-names = "default";
     clock-frequency = <I2C_BITRATE_STANDARD>;
 };
