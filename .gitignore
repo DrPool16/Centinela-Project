@@ -30,3 +30,7 @@ cloud/**/data/
 *.pem
 *.key
 .env
+
+# Datasheets: documentacion propietaria de NXP, no se redistribuye
+# (ver hardware/README.md para el indice y de donde descargarlos)
+hardware/datasheets/
