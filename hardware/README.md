@@ -25,11 +25,13 @@ Todos se obtienen desde la página del producto en nxp.com
 - **Pines I2C del header**: `A4` = PTC2 (SDA) y `A5` = PTC1 (SCL), que
   corresponden al periférico **I2C1**. Son los pines I2C designados por NXP
   en esta placa y los que usa el proyecto (ver ADR-003).
-- **`A2` = PTB2 y `A3` = PTB3** (I2C0): ningún dispositivo logra comunicarse
-  por estos pines bajo Zephyr, pese a que el mux se programa correctamente
-  (`PORTB_PCRn = 0x203`, `MUX=2`) y a haber probado con pull-ups externos de
-  4.7 kΩ. La causa eléctrica **no está determinada** (haría falta un
-  osciloscopio). Pendiente abierto, no causa conocida — ver ADR-003.
+- **`A2` = PTB2 y `A3` = PTB3** (I2C0): funcionan, **pero solo si antes se
+  liberan `PTB0`/`PTB1`**. El ROM bootloader de Kinetis (RM cap. 13) deja
+  esos dos pines muxeados a I2C0 en modo esclavo y flotando; si la aplicación
+  muxea además `PTB2`/`PTB3` al mismo periférico, éste queda con dos SCL y
+  dos SDA y pierde el arbitraje. Confirmado 0/5 sin liberar vs 5/5
+  liberando — ver ADR-003. **Aplica a cualquier uso de I2C0 en pines
+  distintos de `PTB0`/`PTB1`, en cualquier proyecto sobre este SoC.**
 - **FXOS8700CQ integrado**: acelerómetro + magnetómetro soldado en la placa,
   en `0x1C` sobre I2C0 (pines stock PTE24/PTE25, con pull-ups de 4.7 kΩ
   poblados). Tiene un pin de **reset en PTE1 (activo en alto)**: si nadie lo
@@ -47,8 +49,14 @@ GND        <---->  GND
 SCL        <---->  A5  (PTC1, I2C1_SCL)
 SDA        <---->  A4  (PTC2, I2C1_SDA)
 ADDR       <---->  GND        (fija la dirección en 0x48)
-A0, A1     <---->  salida del SCT-013 (lectura diferencial)
+A0, A1     <---->  los dos conductores del jack del SCT-013
+                   (lectura diferencial A0-A1)
 ```
+
+Validado en hardware con un abanico como carga: `0.589 A`, `~65 W`, `200/200`
+transacciones I2C correctas por ciclo, y factor de cresta 1.39 (senoidal
+limpia). Ver `docs/03-guia-interpretacion-medidas.md` para cómo leer e
+interpretar esos números.
 
 El SCT-013 es la variante **con salida de voltaje** (resistencia burden
 interna), por lo que se conecta directamente a las entradas del ADS1115 sin
