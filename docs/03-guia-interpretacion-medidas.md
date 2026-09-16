@@ -107,6 +107,11 @@ El resultado es **el valor de una señal continua que produciría el mismo
 calor**. Por eso es la magnitud que usan los multímetros y las facturas de
 la luz.
 
+Fíjate en el `- offset` de la fórmula: el RMS se toma respecto al centro real
+de la señal, no respecto a cero. Si no se restara, cualquier desviación
+continua de la cadena de medida se sumaría a la lectura **como si fuera
+corriente**, inflando el resultado sin que nada lo delate.
+
 ### `Corriente`
 
 `Vrms` convertido a amperios con la proporción de la pinza:
@@ -234,7 +239,14 @@ ciclo**.
 Con 200 muestras se cubren unos 14 ciclos completos, suficiente para que el
 RMS sea estable y no dependa de en qué punto de la onda empezó el muestreo.
 
-> Nota: el driver del firmware (`firmware/src/drivers/ads1115.c`) usa 128
-> muestras por segundo, que a 60 Hz da solo ~2 muestras por ciclo — muy poco
-> para un RMS fiable. Subirlo a 860 SPS es una mejora identificada durante la
-> validación en hardware.
+Lo que limita el ritmo real no es el ADC, sino el bus I2C: entre el sondeo
+del bit de "conversión lista" y la lectura del resultado, cada muestra sale a
+unos 2 ms, es decir ~450 muestras por segundo efectivas.
+
+> El driver del firmware (`firmware/src/drivers/ads1115.c`) usaba
+> originalmente 128 SPS, que a 60 Hz daba **menos de 2 muestras por ciclo** —
+> por debajo del límite de Nyquist, con el aliasing correspondiente. Se
+> corrigió a 860 SPS tras la validación en hardware.
+
+El driver usa 64 muestras por lectura, que a ~450 muestras/s cubren unos 8
+ciclos de red.

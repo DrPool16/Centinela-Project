@@ -17,12 +17,15 @@ LOG_MODULE_REGISTER(ads1115, LOG_LEVEL_INF);
 #define ADS1115_MUX_DIFF_0_1     0x0000
 #define ADS1115_PGA_2V048        0x0400
 #define ADS1115_MODE_SINGLE      0x0100
-#define ADS1115_DR_128SPS        0x0080
+#define ADS1115_DR_860SPS        0x00E0
 #define ADS1115_COMP_DISABLE     0x0003
 
-#define SCT013_NUM_SAMPLES       64      /* ~500ms de muestreo — promedio estable, igual que en MCUXpresso */
+#define SCT013_NUM_SAMPLES       64      /* ~8 ciclos de red a 60Hz — ver nota de muestreo */
 #define SCT013_RATIO             30.0f   /* SCT013-030: 30A / 1V */
 #define RED_VOLTAJE_RMS          110.0f  /* Red eléctrica local (Colombia) */
+
+/* PGA ±2.048V sobre 15 bits útiles: 2.048 / 32768 */
+#define VOLTS_PER_COUNT          0.0000625f
 
 /* ─── Funciones internas ─────────────────────────────────────────────── */
 
@@ -53,13 +56,13 @@ static ads1115_status_t read_differential(const struct device *dev, int16_t *res
                       ADS1115_MUX_DIFF_0_1   |
                       ADS1115_PGA_2V048      |
                       ADS1115_MODE_SINGLE    |
-                      ADS1115_DR_128SPS      |
+                      ADS1115_DR_860SPS      |
                       ADS1115_COMP_DISABLE;
 
     if (reg_write16(dev, ADS1115_REG_CONFIG, config) != 0)
         return ADS1115_ERR_COMM;
 
-    /* A 128SPS la conversión tarda ~8ms — polling del bit OS (bit 15) en config */
+    /* A 860SPS la conversión tarda ~1.2ms — polling del bit OS (bit 15) en config */
     uint32_t timeout = 0;
     uint16_t status  = 0;
 
@@ -92,7 +95,7 @@ ads1115_status_t ads1115_init(const struct device *i2c_dev)
     uint16_t default_config = ADS1115_MUX_DIFF_0_1  |
                               ADS1115_PGA_2V048      |
                               ADS1115_MODE_SINGLE    |
-                              ADS1115_DR_128SPS      |
+                              ADS1115_DR_860SPS      |
                               ADS1115_COMP_DISABLE;
 
     if (reg_write16(i2c_dev, ADS1115_REG_CONFIG, default_config) != 0) {
@@ -106,26 +109,48 @@ ads1115_status_t ads1115_init(const struct device *i2c_dev)
 
 ads1115_status_t sct013_read(const struct device *i2c_dev, sct013_data_t *out)
 {
-    /* El SCT-013 genera una señal AC — para RMS se necesitan muestras
-     * durante varios ciclos. A 60Hz, 128SPS da ~4 muestras/ciclo;
-     * 64 muestras (~500ms) da un promedio estable (igual que en MCUXpresso). */
-    float    sum_squares = 0.0f;
+    /* El SCT-013 entrega una señal AC: el RMS debe calcularse sobre varios
+     * ciclos completos de red.
+     *
+     * Nota de muestreo: lo que limita el ritmo no es el ADC sino el I2C.
+     * Con 860SPS la conversión tarda ~1.2ms y cada muestra sale a ~2ms
+     * contando el sondeo y las lecturas del bus, o sea ~450 muestras/s
+     * efectivas: unas 7 por ciclo a 60Hz, y 64 muestras cubren ~8 ciclos.
+     * Con los 128SPS anteriores la conversión sola ya costaba ~8ms, lo que
+     * daba menos de 2 muestras por ciclo — por debajo del límite de Nyquist
+     * para 60Hz, con el aliasing correspondiente.
+     *
+     * El RMS se toma respecto a la media real de la señal, no respecto a
+     * cero: cualquier offset DC de la cadena de medida se sumaría a la
+     * lectura como si fuera corriente. Se usa la identidad
+     * varianza = E[x²] - media², que permite hacerlo en UNA sola pasada
+     * (mismo patrón que baseline_accumulator_finalize() en
+     * lib/anomaly_detector.c). */
+    float    sum    = 0.0f;
+    float    sum_sq = 0.0f;
     int16_t  raw;
     uint32_t valid = 0;
 
     for (uint32_t i = 0; i < SCT013_NUM_SAMPLES; i++) {
         if (read_differential(i2c_dev, &raw) != ADS1115_OK) continue;
 
-        /* PGA ±2.048V → LSB = 2.048 / 32767 ≈ 62.5µV */
-        float voltage = (float)raw * 0.0000625f;
+        float voltage = (float)raw * VOLTS_PER_COUNT;
 
-        sum_squares += voltage * voltage;
+        sum    += voltage;
+        sum_sq += voltage * voltage;
         valid++;
     }
 
     if (valid == 0) return ADS1115_ERR_COMM;
 
-    out->voltage_rms    = sqrtf(sum_squares / (float)valid);
+    float mean     = sum / (float)valid;
+    float variance = (sum_sq / (float)valid) - (mean * mean);
+
+    if (variance < 0.0f) {
+        variance = 0.0f; /* cancelación numérica con varianza real ~0 */
+    }
+
+    out->voltage_rms    = sqrtf(variance);
     out->current_rms    = out->voltage_rms * SCT013_RATIO;
     out->power_apparent = out->current_rms * RED_VOLTAJE_RMS;
 
