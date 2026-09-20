@@ -36,10 +36,17 @@ void sensor_thread_fn(void *a, void *b, void *c)
     /* Inicializar sensores — el fallo de uno no debe impedir monitorear
      * los demás: bmp280_read()/sct013_read() ya reportan sus propios
      * fallos por lectura (bmp_ok/curr_ok más abajo). */
-    if (bmp280_init(i2c_dev) != BMP280_OK) {
-        LOG_ERR("BMP280 no responde");
-    } else {
-        LOG_INF("BMP280 OK");
+    /* Distinguir "no está en el bus" de "está pero no lo reconozco": son
+     * problemas distintos y llevan a revisar cosas distintas. */
+    switch (bmp280_init(i2c_dev)) {
+    case BMP280_OK:
+        break; /* el driver ya reporta el modelo y su chip_id */
+    case BMP280_ERR_ID:
+        LOG_ERR("Sensor ambiental presente en el bus pero con ID no reconocido");
+        break;
+    default:
+        LOG_ERR("Sensor ambiental no responde en 0x76 — revisar cableado/alimentación");
+        break;
     }
 
     if (ads1115_init(i2c_dev) != ADS1115_OK) {

@@ -9,6 +9,20 @@ LOG_MODULE_REGISTER(bmp280, LOG_LEVEL_INF);
 
 #define BMP280_ADDR             0x76U
 
+/* Identificadores de chip aceptados (registro 0xD0).
+ *
+ * El módulo de este proyecto es un BMP280 auténtico: verificado en hardware,
+ * devuelve 0x58.
+ *
+ * Se acepta también 0x60 (BME280) porque es habitual encontrarlo en módulos
+ * rotulados como "BMP280", y para temperatura y presión es compatible:
+ * mismo mapa de registros, mismo protocolo y misma fórmula de compensación
+ * — solo añade humedad, que este proyecto no usa. **Esa rama no está
+ * probada en hardware**: no disponemos de un BME280. Se incluye como
+ * tolerancia, no como soporte verificado. */
+#define CHIP_ID_BMP280          0x58U
+#define CHIP_ID_BME280          0x60U
+
 /* Registros */
 #define BMP280_REG_ID           0xD0
 #define BMP280_REG_RESET        0xE0
@@ -68,8 +82,11 @@ bmp280_status_t bmp280_init(const struct device *dev)
     if (reg_read(dev, BMP280_REG_ID, &chip_id, 1) != 0)
         return BMP280_ERR_COMM;
 
-    if (chip_id != 0x58)
+    if (chip_id != CHIP_ID_BMP280 && chip_id != CHIP_ID_BME280) {
+        LOG_ERR("chip_id=0x%02X inesperado (BMP280=0x%02X, BME280=0x%02X)",
+                chip_id, CHIP_ID_BMP280, CHIP_ID_BME280);
         return BMP280_ERR_ID;
+    }
 
     /* Reset por software */
     reg_write(dev, BMP280_REG_RESET, 0xB6);
@@ -77,13 +94,24 @@ bmp280_status_t bmp280_init(const struct device *dev)
 
     load_calibration(dev);
 
-    /* Configurar: oversampling x2 temp, x16 presión, modo normal */
-    reg_write(dev, BMP280_REG_CTRL_MEAS, 0x57);
+    /* ORDEN IMPORTANTE: primero `config`, después `ctrl_meas`.
+     *
+     * Los sensores Bosch ignoran las escrituras a `config` cuando ya están
+     * en modo normal; hay que configurarlos mientras siguen en reposo
+     * (tras el reset por software el sensor queda dormido). Con el orden
+     * invertido, el tiempo de standby se quedaba en su valor por defecto
+     * en vez de los 500 ms pedidos, el sensor encadenaba conversiones casi
+     * sin pausa y el bit `measuring` quedaba activo de forma permanente:
+     * bmp280_read() agotaba su espera y devolvía ERR_MEAS una y otra vez. */
 
-    /* Filtro IIR x16, standby 500ms */
+    /* Filtro IIR x16, standby 500ms — mientras está en reposo */
     reg_write(dev, BMP280_REG_CONFIG, 0x90);
 
-    LOG_INF("BMP280 OK — chip_id=0x%02X", chip_id);
+    /* Oversampling x2 temp, x16 presión, y arrancar en modo normal */
+    reg_write(dev, BMP280_REG_CTRL_MEAS, 0x57);
+
+    LOG_INF("%s OK — chip_id=0x%02X",
+            (chip_id == CHIP_ID_BME280) ? "BME280" : "BMP280", chip_id);
     return BMP280_OK;
 }
 
@@ -92,19 +120,40 @@ bmp280_status_t bmp280_read(const struct device *dev, bmp280_data_t *out)
     uint8_t raw[6];
     int32_t adc_P, adc_T, t_fine;
 
-    /* Esperar si está midiendo */
-    uint8_t status;
-    uint32_t timeout = 0;
+    /* Esperar a que termine una conversión en curso.
+     *
+     * Esta espera tenía tres defectos que hacían imposible diagnosticar un
+     * fallo: `status` sin inicializar, el retorno de reg_read() ignorado
+     * (si la lectura fallaba, `status` conservaba basura y el bucle giraba
+     * en vano), y la condición de salida mirando el contador en vez del
+     * bit, que daba ERR_MEAS aunque el sensor se hubiera liberado en el
+     * último intento. */
+    uint8_t  status   = 0;
+    uint32_t intentos = 0;
+    int      ret;
+
     do {
-        reg_read(dev, BMP280_REG_STATUS, &status, 1);
-        if (status & 0x08) k_msleep(5);
-        timeout++;
-    } while ((status & 0x08) && timeout < 20);
+        ret = reg_read(dev, BMP280_REG_STATUS, &status, 1);
+        if (ret != 0) {
+            LOG_ERR("STATUS ilegible (ret=%d) en el intento %u", ret, intentos);
+            return BMP280_ERR_COMM;
+        }
+        if (status & 0x08) {
+            k_msleep(5);
+        }
+    } while ((status & 0x08) && ++intentos < 20);
 
-    if (timeout >= 20) return BMP280_ERR_MEAS;
+    if (status & 0x08) {
+        LOG_ERR("sigue midiendo tras %u intentos (status=0x%02X)",
+                intentos, status);
+        return BMP280_ERR_MEAS;
+    }
 
-    if (reg_read(dev, BMP280_REG_PRESS_MSB, raw, 6) != 0)
+    ret = reg_read(dev, BMP280_REG_PRESS_MSB, raw, 6);
+    if (ret != 0) {
+        LOG_ERR("lectura de datos falló (ret=%d, status=0x%02X)", ret, status);
         return BMP280_ERR_COMM;
+    }
 
     adc_P = ((int32_t)raw[0] << 12) | ((int32_t)raw[1] << 4) | (raw[2] >> 4);
     adc_T = ((int32_t)raw[3] << 12) | ((int32_t)raw[4] << 4) | (raw[5] >> 4);
