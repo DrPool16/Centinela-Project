@@ -43,9 +43,9 @@ flowchart TB
 | Sensor | Modelo | Bus/pines | Uso | Estado |
 |---|---|---|---|---|
 | Vibración (IMU) | MPU6050 (o el **FXOS8700 integrado en la placa**, ver nota) | I2C1 (PTC1/PTC2) / I2C0 `0x1C` para el FXOS8700 | Acelerómetro 3 ejes → RMS/pico/kurtosis de vibración | **Diferido** — fuera del alcance actual, no descartado (ver `00-product-spec.md`) |
-| Ambiental | BMP280 | I2C1, addr `0x76` | Temperatura + presión (contexto, no dispara alarmas por sí solo) | Driver implementado; pendiente de cablear |
+| Ambiental | BMP280 | I2C1, addr `0x76` | Temperatura + presión (contexto, no dispara alarmas por sí solo) | **Implementado y validado en hardware real** (`chip_id=0x58`) |
 | Corriente | SCT-013 → ADS1115 | I2C1 (PTC1 SCL / PTC2 SDA), ADS1115 addr `0x48` | Corriente AC no invasiva del motor → RMS de corriente | **Implementado y validado en hardware real** (`ADS1115 OK`) |
-| Almacenamiento local | W25Q32 (flash SPI) | SPI1 (PTD5 SCK, PTB16 MOSI, PTB17 MISO, PTD4 CS) | Store-and-forward de telemetría + datos de calibración | Driver custom funcional, fuera de la API estándar de Zephyr (ver nota) |
+| Almacenamiento local | W25Q32 (XMC, 4 MB) | SPI1 (PTD5 SCK, PTB16 MOSI, PTB17 MISO, PTD4 CS) | Store-and-forward de telemetría + datos de calibración | **Validado en hardware** (JEDEC `20 40 16`). Driver custom, fuera de la API estándar de Zephyr (ver ADR-002). **Limitación de desgaste sin resolver — ver `04-almacenamiento-local.md`** |
 | Conectividad celular | Quectel EC200T-AU | LPUART1 (libre; LPUART0 está tomado por la consola de depuración) | AT commands, MQTT/TLS | Fase 4 |
 
 **Nota sobre el código heredado (actualizada tras auditoría en Fase 2)**: la
