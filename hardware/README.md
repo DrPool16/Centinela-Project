@@ -62,3 +62,21 @@ El SCT-013 es la variante **con salida de voltaje** (resistencia burden
 interna), por lo que se conecta directamente a las entradas del ADS1115 sin
 componentes adicionales. La pinza debe abrazar **un solo conductor** (fase)
 de la carga a medir.
+
+El BMP280 comparte el mismo bus I2C1, con `SDO` a GND (dirección `0x76`) y
+`CSB` a 3.3 V (modo I2C). Validado: `chip_id = 0x58`.
+
+```
+W25Q32             FRDM-K32L2B3
+------             ------------
+VCC        <---->  3.3V
+GND        <---->  GND
+CLK / SCK  <---->  PTD5
+DI  / MOSI <---->  PTB16
+DO  / MISO <---->  PTB17
+CS         <---->  PTD4  (GPIO manual, no función SPI)
+```
+
+Validado en hardware: **JEDEC ID `20 40 16`** → XMC, SPI NOR, 4 MB,
+compatible con el W25Q32. Ver `docs/04-almacenamiento-local.md` para el
+formato de los datos y las limitaciones conocidas.
