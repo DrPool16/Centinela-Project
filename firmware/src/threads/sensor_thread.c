@@ -1,6 +1,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/shell/shell.h>
+#include <zephyr/sys/atomic.h>
 #include "bmp280.h"
 #include "ads1115.h"
 #include "data_logger.h"
@@ -10,6 +12,24 @@ LOG_MODULE_REGISTER(sensor_thread, LOG_LEVEL_INF);
 
 #define CALIBRATION_SAMPLES  20      /* ~100s de calibración a 5s/muestra */
 #define Z_SCORE_THRESHOLD    3.0f    /* regla de las 3 sigma */
+
+/* Muestras descartadas antes de empezar a calibrar. A 5s/muestra son ~50s,
+ * tiempo de sobra para que el autocalentamiento del BMP280 se estabilice.
+ * Medido en hardware: la temperatura subía de 33.24 a 33.85 °C durante el
+ * primer minuto; calibrar sobre esa rampa daba una media que no
+ * representaba el régimen estable. */
+#define WARMUP_SAMPLES       10
+
+/* Muestras anómalas consecutivas exigidas para declarar la anomalía. Una
+ * degradación real es sostenida; el ruido puntual no. */
+#define ANOMALY_PERSISTENCE  3
+
+/* Muestras fuera de banda y estables entre sí que se exigen antes de
+ * concluir que han cambiado la máquina y readoptar la línea base. A
+ * 5s/muestra son ~30s. Más exigente que ANOMALY_PERSISTENCE a propósito:
+ * primero se alarma, y solo si la situación nueva se consolida se acepta
+ * como normalidad nueva. */
+#define RELEARN_SAMPLES      6
 
 /* Device Tree — obtener handle del bus I2C (I2C1 en PTC1/PTC2, los pines
  * I2C designados por NXP en el header de esta placa — ver app.overlay y
@@ -22,6 +42,25 @@ K_MSGQ_DEFINE(sensor_queue, sizeof(sensor_record_t), 10, 4);
 
 /* Semáforo para proteger el bus I2C entre threads */
 K_SEM_DEFINE(i2c_sem, 1, 1);
+
+/* Recalibración manual pedida desde el shell. El hilo la atiende al
+ * principio del siguiente ciclo; no se toca la línea base desde el
+ * contexto del shell. */
+static atomic_t recalibracion_pedida;
+
+static int cmd_calibrar(const struct shell *sh, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc); ARG_UNUSED(argv);
+
+    atomic_set(&recalibracion_pedida, 1);
+    shell_print(sh, "Recalibración solicitada: empezará en el próximo ciclo.");
+    return 0;
+}
+
+SHELL_CMD_REGISTER(calibrar, NULL,
+                   "Descarta la línea base actual y vuelve a calibrar "
+                   "(úsalo tras cambiar de máquina)",
+                   cmd_calibrar);
 
 void sensor_thread_fn(void *a, void *b, void *c)
 {
@@ -66,13 +105,38 @@ void sensor_thread_fn(void *a, void *b, void *c)
     baseline_accumulator_t temp_acc, curr_acc;
     baseline_t temp_baseline = {0}, curr_baseline = {0};
     bool temp_calibrated = false, curr_calibrated = false;
-    baseline_accumulator_reset(&temp_acc);
-    baseline_accumulator_reset(&curr_acc);
+    baseline_accumulator_reset(&temp_acc, WARMUP_SAMPLES);
+    baseline_accumulator_reset(&curr_acc, WARMUP_SAMPLES);
 
-    LOG_INF("Iniciando calibración de línea base (%d muestras por señal)...",
-            CALIBRATION_SAMPLES);
+    /* Una anomalía solo se declara tras varias muestras consecutivas fuera
+     * de banda; el ruido puntual no debe disparar una alarma. */
+    anomaly_debounce_t temp_deb, curr_deb;
+    anomaly_debounce_reset(&temp_deb, ANOMALY_PERSISTENCE);
+    anomaly_debounce_reset(&curr_deb, ANOMALY_PERSISTENCE);
+
+    /* Reaprendizaje: si la señal se asienta en un nivel nuevo y estable,
+     * es que han cambiado la máquina, no que se esté averiando. */
+    baseline_relearn_t temp_rel, curr_rel;
+    baseline_relearn_reset(&temp_rel, RELEARN_SAMPLES);
+    baseline_relearn_reset(&curr_rel, RELEARN_SAMPLES);
+
+    LOG_INF("Calibración: %d muestras de calentamiento + %d de línea base",
+            WARMUP_SAMPLES, CALIBRATION_SAMPLES);
 
     while (1) {
+        /* Recalibración manual pedida desde el shell. */
+        if (atomic_cas(&recalibracion_pedida, 1, 0)) {
+            LOG_INF("Recalibrando por petición manual — descartando línea base");
+            temp_calibrated = false;
+            curr_calibrated = false;
+            baseline_accumulator_reset(&temp_acc, WARMUP_SAMPLES);
+            baseline_accumulator_reset(&curr_acc, WARMUP_SAMPLES);
+            anomaly_debounce_reset(&temp_deb, ANOMALY_PERSISTENCE);
+            anomaly_debounce_reset(&curr_deb, ANOMALY_PERSISTENCE);
+            baseline_relearn_reset(&temp_rel, RELEARN_SAMPLES);
+            baseline_relearn_reset(&curr_rel, RELEARN_SAMPLES);
+        }
+
         /* Tomar semáforo antes de usar I2C */
         k_sem_take(&i2c_sem, K_FOREVER);
 
@@ -106,10 +170,23 @@ void sensor_thread_fn(void *a, void *b, void *c)
             }
         } else if (bmp_ok) {
             float z_temp;
-            if (anomaly_z_score_check(&temp_baseline, record.temperature,
-                                       Z_SCORE_THRESHOLD, &z_temp)) {
+            bool fuera = anomaly_z_score_check(&temp_baseline,
+                                               record.temperature,
+                                               Z_SCORE_THRESHOLD, &z_temp);
+            if (anomaly_debounce_update(&temp_deb, fuera)) {
                 record.status |= RECORD_STATUS_TEMP_ANOMALY;
-                LOG_WRN("Anomalía de temperatura: z=%.2f", (double)z_temp);
+                LOG_WRN("Anomalía de temperatura sostenida: z=%.2f", (double)z_temp);
+            }
+
+            baseline_t nueva;
+
+            if (baseline_relearn_update(&temp_rel, record.temperature,
+                                        fuera, &nueva)) {
+                temp_baseline = nueva;
+                anomaly_debounce_reset(&temp_deb, ANOMALY_PERSISTENCE);
+                LOG_INF("Nueva línea base de temperatura — mean=%.2f stddev=%.2f "
+                        "(nivel estable distinto: se asume cambio de condiciones)",
+                        (double)nueva.mean, (double)nueva.stddev);
             }
         }
 
@@ -124,10 +201,23 @@ void sensor_thread_fn(void *a, void *b, void *c)
             }
         } else if (curr_ok) {
             float z_curr;
-            if (anomaly_z_score_check(&curr_baseline, record.current_rms,
-                                       Z_SCORE_THRESHOLD, &z_curr)) {
+            bool fuera = anomaly_z_score_check(&curr_baseline,
+                                               record.current_rms,
+                                               Z_SCORE_THRESHOLD, &z_curr);
+            if (anomaly_debounce_update(&curr_deb, fuera)) {
                 record.status |= RECORD_STATUS_CURR_ANOMALY;
-                LOG_WRN("Anomalía de corriente: z=%.2f", (double)z_curr);
+                LOG_WRN("Anomalía de corriente sostenida: z=%.2f", (double)z_curr);
+            }
+
+            baseline_t nueva;
+
+            if (baseline_relearn_update(&curr_rel, record.current_rms,
+                                        fuera, &nueva)) {
+                curr_baseline = nueva;
+                anomaly_debounce_reset(&curr_deb, ANOMALY_PERSISTENCE);
+                LOG_INF("Nueva línea base de corriente — mean=%.3f stddev=%.3f "
+                        "(nivel estable distinto: se asume cambio de máquina)",
+                        (double)nueva.mean, (double)nueva.stddev);
             }
         }
 
