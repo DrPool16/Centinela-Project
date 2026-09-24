@@ -26,6 +26,17 @@ docs/       Arquitectura, ADRs, diagramas, runbook
 hardware/   Notas de cableado, esquemáticos
 ```
 
+## Metodología
+
+El proyecto se desarrolla con **SDD** (desarrollo dirigido por
+especificación): cada petición entra como un ciclo —especificación, plan,
+tareas, implementación, validación— y **se cierra** al cumplir su Definición
+de Hecho.
+
+- [`docs/sdd/README.md`](docs/sdd/README.md) — el ciclo de 8 pasos
+- [`docs/sdd/constitution.md`](docs/sdd/constitution.md) — principios no negociables
+- [`AGENTS.md`](AGENTS.md) — reglas operativas para agentes de IA
+
 ## Contribuir
 
 Ver [CONTRIBUTING.md](CONTRIBUTING.md) para el flujo de ramas, commits y revisión.
