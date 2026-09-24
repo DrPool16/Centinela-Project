@@ -29,22 +29,21 @@ typedef struct {
 #define ALERT_TEMP_MAX_C            40.0f
 #define ALERT_CURR_MAX_A            5.0f
 
-#define FLASH_ADDR_METADATA         0x000000UL
+/* Distribución de la flash externa.
+ *
+ * El primer sector (0x000000) queda RESERVADO y sin usar. Contuvo un índice
+ * (magic, record_count, next_address) que se reescribía en cada registro, y
+ * como reescribir en flash NOR obliga a borrar el sector entero, se
+ * desgastaba 128 veces más rápido que los de datos: ~6 días de vida útil a
+ * un registro cada 5s.
+ *
+ * Ahora el índice se DERIVA al arrancar (ver logger_init) en vez de
+ * almacenarse. Ver docs/sdd/ciclos/001-desgaste-metadatos/. */
+#define FLASH_ADDR_RESERVED         0x000000UL
 #define FLASH_ADDR_DATA_START       0x001000UL
 #define FLASH_RECORD_SIZE           32U
 #define FLASH_MAX_RECORDS \
     ((4*1024*1024 - 0x1000) / FLASH_RECORD_SIZE)
-
-typedef struct {
-    uint32_t magic;
-    uint32_t record_count;
-    uint32_t next_address;
-    uint8_t  checksum;
-    uint8_t  reserved[3];
-} flash_metadata_t;
-
-#define METADATA_MAGIC              0xDEADBEEFUL
-#define METADATA_DATA_SIZE          (sizeof(uint32_t) * 3)
 
 typedef enum {
     LOGGER_OK           =  0,

@@ -135,13 +135,13 @@ leen correctamente con la estructura actual y todos sus checksums validan.
 Pero es suerte, no diseño. Añadir un campo de versión a los metadatos es una
 mejora pendiente y barata.
 
-## 6. Limitación sin resolver: desgaste del sector de metadatos
+## 6. Desgaste del sector de metadatos: problema y solución
 
-**Este es el problema serio de la implementación actual.**
+### El problema (implementación original)
 
-`logger_write()` llama a `save_metadata()` en **cada registro**, y
-`save_metadata()` **borra el sector 0 completo** cada vez. Es decir: **un
-ciclo de borrado del sector de metadatos por cada registro guardado**.
+`logger_write()` llamaba a `save_metadata()` en **cada registro**, y
+`save_metadata()` **borraba el sector 0 completo** cada vez: un ciclo de
+borrado del sector de metadatos por cada registro guardado.
 
 Medido en la memoria real tras 624 registros:
 
@@ -150,28 +150,82 @@ Medido en la memoria real tras 624 registros:
 | Metadatos (0x000000) | **624** |
 | Datos (128 registros por sector) | 4 |
 
-El sector de metadatos se desgasta **128 veces más rápido** que los de datos.
-Con un registro cada 5 segundos y una vida de ~100.000 ciclos:
+**128 veces más desgaste.** Con un registro cada 5 segundos y una vida de
+~100.000 ciclos:
 
 ```
 100.000 × 5 s ≈ 6 días de funcionamiento continuo
 ```
 
-El nodo se quedaría **sin poder registrar nada, con el 99 % de la memoria
-intacta**. Para un equipo pensado para vivir años en una planta industrial,
-es un defecto de diseño, no un detalle.
+El nodo se habría quedado **sin poder registrar nada con el 99 % de la
+memoria intacta**.
 
-### Opciones evaluadas
+### La solución: derivar el índice en vez de almacenarlo
 
-| Opción | Cómo funciona | Ganancia | Coste |
-|---|---|---|---|
-| **Índice rotatorio** | En vez de reescribir siempre en la misma posición, las entradas se escriben consecutivamente dentro del sector; solo se borra al llenarse | 4096 B / 16 B por entrada = **256× más vida** | Moderado: hay que localizar la última entrada válida al arrancar |
-| **Reconstruir al arrancar** | No guardar índice. Al encender, buscar el primer registro vacío (`0xFF`) y continuar desde ahí | Elimina por completo la escritura de metadatos | Arranque más lento; requiere búsqueda binaria sobre 4 MB |
-| **Aplazar** | Documentarlo y seguir | Ninguna | La limitación permanece |
+El sector de metadatos **ya no se usa**. `record_count` y `next_address`
+viven solo en RAM y se derivan al arrancar buscando la frontera entre
+registros escritos y vacíos:
 
-Ninguna está implementada todavía. El uso actual —sesiones de desarrollo de
-minutos u horas— está muy lejos del límite, pero **el defecto debe
-resolverse antes de cualquier despliegue real**.
+```
+lo = 0 ; hi = FLASH_MAX_RECORDS
+mientras lo < hi:
+    mid = lo + (hi - lo) / 2
+    si vacío(mid):  hi = mid
+    si no:          lo = mid + 1
+devolver lo          # primer índice vacío = record_count
+```
+
+**Coste: 17 lecturas** sobre 130.944 registros (`log₂`), unos milisegundos.
+Una versión anterior de este documento atribuía a esta opción un "arranque
+más lento"; era una estimación **no medida** y resultó falsa.
+
+**Escrituras del sector de metadatos: cero.** El desgaste deja de existir en
+lugar de mitigarse, y la vida útil pasa a estar limitada solo por los
+sectores de datos, que consumen un ciclo cada 128 registros.
+
+### Detalles que hacen que funcione
+
+**Detección de registro vacío.** Un registro está vacío si sus **32 bytes
+valen `0xFF`**.
+
+> **Trampa**: el checksum es un XOR de 23 bytes, y el XOR de 23 bytes `0xFF`
+> vale `0xFF` — **un registro borrado pasa la validación de checksum**. Usar
+> el checksum para detectar huecos habría dado siempre "escrito".
+
+**Monotonía.** La búsqueda binaria exige que todos los registros anteriores a
+la frontera estén escritos y todos los posteriores vacíos. Se cumple porque
+`logger_write()` escribe secuencialmente y solo borra **hacia delante** (el
+sector siguiente, al entrar en él).
+
+**Cortes de energía.**
+
+| Momento del corte | Resultado al arrancar |
+|---|---|
+| Tras borrar un sector, antes de escribir | Frontera al inicio de ese sector. Correcto |
+| A mitad de escribir un registro | Ese registro no es todo `0xFF`, cuenta como escrito. Queda un registro corrupto que `logger_read()` detecta por checksum; el índice sigue coherente |
+
+**`logger_clear()`** ya no reinicia un contador: borra los sectores desde el
+inicio de datos hasta la frontera actual. Borrar solo una parte rompería la
+monotonía. Se invoca desde el shell con confirmación explícita:
+
+```
+uart:~$ formatear confirmar
+```
+
+La lógica de búsqueda vive en `firmware/src/lib/record_index.c`, separada del
+hardware y cubierta por tests (ver ciclo
+[`001-desgaste-metadatos`](sdd/ciclos/001-desgaste-metadatos/)).
+
+### Limitación aceptada: sin identificación de formato
+
+El `magic` respondía "¿esta memoria es de este proyecto?". Sin metadatos, una
+flash escrita por otro proyecto se interpretaría como registros propios: sus
+checksums fallarían al leerlos, pero la frontera se calcularía sobre datos
+ajenos.
+
+Un encabezado escrito **una sola vez** (magic + versión de formato) lo
+resolvería con un único borrado en toda la vida del dispositivo. Queda
+anotado en `PENDIENTES.md`.
 
 ## 7. Otras limitaciones conocidas
 

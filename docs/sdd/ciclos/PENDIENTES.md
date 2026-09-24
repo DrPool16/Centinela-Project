@@ -10,24 +10,20 @@ ahora (P8). Se saca de aquí cuando se abre su ciclo.
 
 ## Alto — afectan a un despliegue real
 
-### Desgaste del sector de metadatos de la W25Q
+### La memoria no lleva identificación de formato
 
-`logger_write()` borra el sector 0 completo en cada registro. Medido: 624
-ciclos en metadatos frente a 4 en datos → **128× más desgaste**. A un
-registro cada 5 s, ~6 días de vida útil.
+Antes del ciclo 001, un `magic` en los metadatos respondía "¿esta memoria es
+de este proyecto?". Al eliminarse el sector de metadatos, esa comprobación
+desapareció: una flash escrita por otro proyecto se interpretaría como
+registros propios. Los checksums fallarían al leerlos, pero la frontera se
+calcularía sobre datos ajenos.
 
-Tres opciones evaluadas en [`04-almacenamiento-local.md`](../../04-almacenamiento-local.md)
-§6. Ninguna implementada.
+Tampoco hay **versión de formato**: si `sensor_record_t` cambiara, los
+registros antiguos se leerían con la estructura nueva sin que nada avisara.
 
-> Candidato a Fase 7 (robustez), o antes si se plantea una prueba de campo.
-
-### Los metadatos no llevan versión de formato
-
-Si `sensor_record_t` cambiara, el firmware encontraría un `magic` válido,
-continuaría escribiendo, y leería los registros antiguos con la estructura
-nueva **sin avisar**. Hoy no ocurre (verificado), pero es suerte.
-
-> Arreglo barato: un campo `format_version` en `flash_metadata_t`.
+> Arreglo barato: un encabezado escrito **una sola vez** (magic + versión) en
+> el sector reservado `0x000000`. Un único borrado en toda la vida del
+> dispositivo, frente a los 624 que consumía el índice.
 
 ## Medio — calidad y precisión
 

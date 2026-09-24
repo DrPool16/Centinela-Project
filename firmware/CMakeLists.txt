@@ -14,6 +14,7 @@ target_sources(app PRIVATE
     src/app/data_logger.c
     src/lib/bmp280_compensation.c
     src/lib/anomaly_detector.c
+    src/lib/record_index.c
 )
 
 target_include_directories(app PRIVATE

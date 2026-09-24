@@ -1,5 +1,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/shell/shell.h>
+#include <zephyr/sys/atomic.h>
+#include <string.h>
 #include "w25q.h"
 #include "data_logger.h"
 #include "spi_kinetis.h"
@@ -15,6 +18,34 @@ extern struct k_msgq sensor_queue;
 /* Reintentos de inicialización del almacenamiento, en registros recibidos.
  * A 5s por lectura, 12 registros ≈ 1 minuto entre intentos. */
 #define STORAGE_RETRY_EVERY  12
+
+/* Formateo pedido desde el shell. Lo atiende el hilo al principio del
+ * siguiente ciclo: borrar sectores desde el contexto del shell, mientras el
+ * hilo puede estar escribiendo, sería una condición de carrera. */
+static atomic_t formateo_pedido;
+
+static int cmd_formatear(const struct shell *sh, size_t argc, char **argv)
+{
+    /* Operación destructiva: se exige confirmación explícita en vez de
+     * borrar por un comando tecleado de más. */
+    if (argc < 2 || strcmp(argv[1], "confirmar") != 0) {
+        uint32_t n = 0;
+
+        (void)logger_get_count(&n);
+        shell_print(sh, "Esto BORRA los %u registros guardados.", n);
+        shell_print(sh, "Si es lo que quieres: formatear confirmar");
+        return -EINVAL;
+    }
+
+    atomic_set(&formateo_pedido, 1);
+    shell_print(sh, "Formateo solicitado: empezará en el próximo ciclo.");
+    return 0;
+}
+
+SHELL_CMD_REGISTER(formatear, NULL,
+                   "Borra todos los registros del almacenamiento local "
+                   "(requiere: formatear confirmar)",
+                   cmd_formatear);
 
 /* Intenta dejar el almacenamiento local operativo. */
 static bool storage_bring_up(void)
@@ -66,6 +97,16 @@ void logger_thread_fn(void *a, void *b, void *c)
                 }
             }
             continue;
+        }
+
+        /* Formateo pedido desde el shell, atendido aquí para no tocar la
+         * memoria mientras este hilo podría estar escribiendo. */
+        if (atomic_cas(&formateo_pedido, 1, 0)) {
+            if (logger_clear() == LOGGER_OK) {
+                LOG_INF("Almacenamiento formateado por petición manual");
+            } else {
+                LOG_ERR("El formateo falló — revisar la memoria");
+            }
         }
 
         record.record_id = (uint16_t)logger_get_next_id();
