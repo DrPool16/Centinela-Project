@@ -23,3 +23,9 @@ Este repo simula un equipo de dos personas:
 3. CI debe pasar en verde (build + tests + análisis estático).
 4. Aprobación de `@DrPool16` (CODEOWNERS) obligatoria antes de mergear.
 5. Merge a `main` → tag semántico si corresponde a un release.
+
+## Metodología
+
+El flujo de ramas y PRs descrito aquí es el vehículo; el motor de trabajo es
+SDD — ver [`docs/sdd/README.md`](docs/sdd/README.md). Cada PR cierra un ciclo
+con su Definición de Hecho cumplida.
