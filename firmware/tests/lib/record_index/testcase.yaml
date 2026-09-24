@@ -1,0 +1,4 @@
+tests:
+  lib.record_index:
+    platform_allow: native_sim
+    tags: lib
